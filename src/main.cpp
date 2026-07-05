@@ -6,7 +6,7 @@ Timer. Using TIMER_1
 #include <avr/interrupt.h>
 #include <customize/pins.h>
 #include <customize/TM1637.h>
-
+#include <customize/buzzer.h>
 
 void setup();
 
@@ -41,7 +41,7 @@ private:
 
 class Timer {
 public:
-  Timer(uint8_t dioPin, uint8_t clkPin, uint8_t s1, uint8_t s2, uint8_t key) : _display(dioPin, clkPin), _encoder(s1, s2, key)
+  Timer(uint8_t s1, uint8_t s2, uint8_t key, uint8_t dioPin, uint8_t clkPin, uint8_t buzz) : _encoder(s1, s2, key), _display(dioPin, clkPin), _tone(buzz)
   {
     _keyPin = key;
     TCCR1B |= (1 << CS12);
@@ -71,18 +71,6 @@ public:
     }
   }
 
-  void updateSecond()
-  {
-    switch (_mode)
-    {
-      case MODE_GOING:
-      _goingDown();
-      break;
-      default:
-      break;
-    }
-  }
-
   void encode()
   {
     if (pinRead(_keyPin))
@@ -103,6 +91,23 @@ public:
     }
   }
 
+  void updateSecond()
+  {
+    switch (_mode)
+    {
+      case MODE_GOING:
+      _goingDown();
+      break;
+      default:
+      break;
+    }
+  }
+
+  void voiceOver()
+  {
+    _tone.meandrTick();
+  }
+
 
 private:  
   enum  // Режимы
@@ -119,8 +124,9 @@ private:
     CODE_LEFT = 120
   };
 
-  TM1637 _display;
   EncoderPORTD _encoder;
+  TM1637 _display;
+  Buzzer _tone;
   volatile bool _pointState = false;
   volatile uint8_t _keyPin, _mode = MODE_SETUP_MIN, _sec = 0, _min = 0;
 
@@ -136,9 +142,11 @@ private:
     {
       case CODE_LEFT:
       _decrement(razrSelected);
+      _tone.playNote(0, 20);
       break;
       case CODE_RIGHT:
       _increment(razrSelected);
+      _tone.playNote(5, 20);
       break;
     }
     if (_sec == 60)
@@ -216,9 +224,12 @@ private:
 
 };
 
-Timer timer(8, 9, 5, 6, 7);
+Timer timer(5, 6, 7, 8, 9, 10);
 
-
+ISR(TIMER0_COMPA_vect)
+{
+  timer.voiceOver();
+}
 
 ISR(TIMER1_COMPA_vect)
 {
