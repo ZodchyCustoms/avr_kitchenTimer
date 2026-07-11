@@ -55,6 +55,11 @@ public:
     _delay_ms(500);
   }
 
+  void voiceOver()
+  {
+    _tone.meandrTick();
+  }
+
   void updateHalfSecond()
   {
     switch (_mode)
@@ -63,15 +68,29 @@ public:
       _display.point( (_pointState ^= 1) );
       break;
       case MODE_FINISH:
-
-      _display.point(true);
+      _tone.off();
       break;
       default:
       break;
     }
   }
 
-  void encode()
+  void updateSecond()
+  {
+    switch (_mode)
+    {
+      case MODE_GOING:
+      _goingDown();
+      break;
+      case MODE_FINISH:
+      _tone.playNote(5, 500);
+      break;
+      default:
+      break;
+    }
+  }
+
+    void encode()
   {
     if (pinRead(_keyPin))
       _modeSwitch();
@@ -84,28 +103,9 @@ public:
       case MODE_SETUP_SEC:
       _settingUpTime(_encoder.read(), _display.RAZR_SEC);
       _display.showTime(_sec, _display.RAZR_SEC);
-      case MODE_GOING:
-      break;
-      case MODE_FINISH:
-      break;
-    }
-  }
-
-  void updateSecond()
-  {
-    switch (_mode)
-    {
-      case MODE_GOING:
-      _goingDown();
-      break;
       default:
       break;
     }
-  }
-
-  void voiceOver()
-  {
-    _tone.meandrTick();
   }
 
 
@@ -133,7 +133,26 @@ private:
 
   void _modeSwitch()
   {
-    _mode == MODE_FINISH ? _mode = MODE_SETUP_MIN : _mode++;
+    //_mode == MODE_FINISH ? _mode = MODE_SETUP_MIN : _mode++;
+    _mode++;
+    switch (_mode)
+    {
+      case MODE_SETUP_MIN:
+      _tone.playNote(3, 100);
+      break;
+      case MODE_SETUP_SEC:
+      _tone.playNote(3, 100);
+      break;
+      case MODE_GOING:
+      _tone.playNote(3, 300);
+      break;
+      case MODE_FINISH:
+      _tone.playNote(0, 200);
+      _mode = MODE_SETUP_MIN;
+      break;
+      default:
+      break;
+    }
   }
 
   void _settingUpTime(uint8_t direction, uint8_t razrSelected)
@@ -197,6 +216,7 @@ private:
         _sec = 59;
       } else
       {
+        _display.point(true);
         _display.showChar(1);
         _mode = MODE_FINISH;
       }
@@ -205,6 +225,7 @@ private:
     _sec--;
   }
 
+  
   
   void _pointBlink()
   {
