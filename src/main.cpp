@@ -208,7 +208,7 @@ private:
 
   void _goingDown()
   {
-    if (_sec == 0 || _sec == 255)
+    if (_sec == 255)
     {
       if (_min != 0)
       {
