@@ -1,9 +1,6 @@
-/*
-Timer. Using TIMER_1
-*/
-
 #include <avr/io.h>
 #include <avr/interrupt.h>
+#include <util/delay.h>
 #include <customize/pins.h>
 #include <customize/TM1637.h>
 #include <customize/buzzer.h>
@@ -33,21 +30,24 @@ public:
     return _code;
   }
 
+  bool isPressed()
+  {
+    return pinRead(_key);
+  }
+
 private:
   uint8_t _s1, _s2, _key, _code;
 
 };
 
 
-class Timer {
+class Timer
+{
 public:
   Timer(uint8_t s1, uint8_t s2, uint8_t key, uint8_t dioPin, uint8_t clkPin, uint8_t buzz) : _encoder(s1, s2, key), _display(dioPin, clkPin), _tone(buzz)
   {
     _keyPin = key;
-    TCCR1B |= (1 << CS12);
-    TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
-    OCR1A = 31250;    // 0.5 sec - points blink
-    OCR1B = 62500;    // 1 sec   - decrement seconds
+    _initTimer1();
     
     _display.showChar(1);
     _delay_ms(500);
@@ -60,42 +60,47 @@ public:
     _tone.meandrTick();
   }
 
+// #################____EVERY HALF SECOND DO
   void updateHalfSecond()
   {
     switch (_mode)
     {
+      default:
+      break;
       case MODE_GOING:
       _display.point( (_pointState ^= 1) );
       break;
-      case MODE_FINISH:
-      _tone.off();
-      break;
-      default:
+      case MODE_BUZZING:
+      _tone.playNote(3);
       break;
     }
   }
 
+// #################____EVERY SECOND DO
   void updateSecond()
   {
     switch (_mode)
     {
+      default:
+      break;
       case MODE_GOING:
       _goingDown();
       break;
-      case MODE_FINISH:
-      _tone.playNote(5, 500);
-      break;
-      default:
+      case MODE_BUZZING:
+      _tone.off();
       break;
     }
   }
 
-    void encode()
+// #################____Encoder actions
+  void encode()
   {
-    if (pinRead(_keyPin))
-      _modeSwitch();
+    if (_encoder.isPressed())
+    _modeSwitch();
     switch (_mode)
     {
+      default:
+      break;
       case MODE_SETUP_MIN:
       _settingUpTime(_encoder.read(), _display.RAZR_MIN);
       _display.showTime(_min, _display.RAZR_MIN);
@@ -103,8 +108,6 @@ public:
       case MODE_SETUP_SEC:
       _settingUpTime(_encoder.read(), _display.RAZR_SEC);
       _display.showTime(_sec, _display.RAZR_SEC);
-      default:
-      break;
     }
   }
 
@@ -115,9 +118,11 @@ private:
     MODE_SETUP_MIN = 0,
     MODE_SETUP_SEC = 1,
     MODE_GOING = 2,
-    MODE_FINISH = 3
+    MODE_BUZZING = 3,
+    MODE_FINISH = 4
   };
 
+  // Перенести в класс энкодера
   enum  // Поворот энкодера
   {
     CODE_RIGHT = 180,
@@ -133,24 +138,25 @@ private:
 
   void _modeSwitch()
   {
-    //_mode == MODE_FINISH ? _mode = MODE_SETUP_MIN : _mode++;
     _mode++;
     switch (_mode)
     {
+      default:
+      break;
       case MODE_SETUP_MIN:
-      _tone.playNote(3, 100);
       break;
       case MODE_SETUP_SEC:
-      _tone.playNote(3, 100);
+      _tone.playNote(0, 100);
       break;
       case MODE_GOING:
-      _tone.playNote(3, 300);
+      _tone.playNote(6, 300);
+      break;
+      case MODE_BUZZING:
+      _mode = MODE_GOING;
       break;
       case MODE_FINISH:
-      _tone.playNote(0, 200);
+      _tone.off();
       _mode = MODE_SETUP_MIN;
-      break;
-      default:
       break;
     }
   }
@@ -218,7 +224,9 @@ private:
       {
         _display.point(true);
         _display.showChar(1);
-        _mode = MODE_FINISH;
+        //_modeSwitch();
+        _mode = MODE_BUZZING;
+        return;
       }
     }
     _display.show( (_min * 100) + _sec );
@@ -242,10 +250,25 @@ private:
   }
 
 
+  void _initTimer1()
+  {
+    TCCR1B |= (1 << CS12);
+    TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
+    OCR1A = 31250;    // 0.5 sec - points blink
+    OCR1B = 62500;    // 1 sec   - decrement seconds
+  }
+
+  void _stopTimer1()
+  {
+    TCCR1B &= ~((1 << CS10) | (1 << CS11) | (1 << CS12));
+  }
 
 };
 
 Timer timer(5, 6, 7, 8, 9, 10);
+
+
+// ################# MAIN ACTIONS ARE HERE ######################
 
 ISR(TIMER0_COMPA_vect)
 {
@@ -269,6 +292,7 @@ ISR(PCINT2_vect)
   timer.encode();
 }
 
+// ##############################################################
 
 int main()
 {
