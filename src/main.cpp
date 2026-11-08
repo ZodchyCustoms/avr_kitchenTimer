@@ -1,322 +1,300 @@
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
-#include <customize/pins.h>
-#include <customize/TM1637.h>
-#include <customize/buzzer.h>
+#include <customs/encoderPORTD.hpp>
+#include <customs/buzzer.hpp>
+#include <customs/tm1637.hpp>
 
-void setup();
+// Пины
+#define S1 5
+#define S2 6
+#define KEY 7
+#define BUZZ 8
+#define DIO 9
+#define CLK 10
+#define ROTATE_NOTE_DURATION 40
 
-class EncoderPORTD
+// Режимы
+enum State
 {
-public:
-  EncoderPORTD(uint8_t s1, uint8_t s2, uint8_t key)
-  {
-    this->_s1 = s1;
-    this->_s2 = s2;
-    this->_key = key;
-    setPinInput(_s1);
-    setPinInput(_s2);
-    setPinInput(_key);
-    PCICR |= (1 << PCIE2);
-    PCMSK2 |= (1 << _s1) | (1 << _s2) | (1 << _key);
-  }
- 
-  // Return a code of current state of encoder
-  uint8_t read()
-  {
-    _code <<= 2;
-    _code |= (pinRead(_s1) << 0) | (pinRead(_s2) << 1);   // right = 180, left = 120    <--- need to test with any pins
-    return _code;
-  }
-
-  bool isPressed()
-  {
-    return pinRead(_key);
-  }
-
-private:
-  uint8_t _s1, _s2, _key, _code;
-
+  START,
+  SET_MIN,
+  SET_SEC,
+  GOING_DOWN,
+  ALARM,
+  DROP
 };
 
-
-class Timer
+// Заменить инкремент/декремент на одну функцию с параметрами?
+struct Time
 {
-public:
-  Timer(uint8_t s1, uint8_t s2, uint8_t key, uint8_t dioPin, uint8_t clkPin, uint8_t buzz) : _encoder(s1, s2, key), _display(dioPin, clkPin), _tone(buzz)
+  uint8_t getMin()
   {
-    _keyPin = key;
-    _initTimer1();
-    
-    _display.showChar(1);
-    _delay_ms(500);
-    _display.point(true);
-    _delay_ms(500);
+    return (uint8_t) _min;
   }
 
-  void voiceOver()
+  uint8_t getSec()
   {
-    _tone.meandrTick();
+    return (uint8_t) _sec;
   }
 
-// #################____EVERY HALF SECOND DO
-  void updateHalfSecond()
+  void incrementSec()
   {
-    switch (_mode)
-    {
-      default:
-      break;
-      case MODE_GOING:
-      _display.point( (_pointState ^= 1) );
-      break;
-      case MODE_BUZZING:
-      _tone.playNote(3);
-      break;
-    }
+    _sec++;
+    _checkTime();
   }
-
-// #################____EVERY SECOND DO
-  void updateSecond()
+  
+  void decrementSec()
   {
-    switch (_mode)
-    {
-      default:
-      break;
-      case MODE_GOING:
-      _goingDown();
-      break;
-      case MODE_BUZZING:
-      _tone.off();
-      break;
-    }
-  }
-
-// #################____Encoder actions
-  void encode()
-  {
-    if (_encoder.isPressed())
-    _modeSwitch();
-    switch (_mode)
-    {
-      default:
-      break;
-      case MODE_SETUP_MIN:
-      _settingUpTime(_encoder.read(), _display.RAZR_MIN);
-      _display.showTime(_min, _display.RAZR_MIN);
-      break;
-      case MODE_SETUP_SEC:
-      _settingUpTime(_encoder.read(), _display.RAZR_SEC);
-      _display.showTime(_sec, _display.RAZR_SEC);
-    }
-  }
-
-
-private:  
-  enum  // Режимы
-  {
-    MODE_SETUP_MIN = 0,
-    MODE_SETUP_SEC = 1,
-    MODE_GOING = 2,
-    MODE_BUZZING = 3,
-    MODE_FINISH = 4
-  };
-
-  // Перенести в класс энкодера
-  enum  // Поворот энкодера
-  {
-    CODE_RIGHT = 180,
-    CODE_LEFT = 120
-  };
-
-  EncoderPORTD _encoder;
-  TM1637 _display;
-  Buzzer _tone;
-  volatile bool _pointState = false;
-  volatile uint8_t _keyPin, _mode = MODE_SETUP_MIN, _sec = 0, _min = 0;
-
-
-  void _modeSwitch()
-  {
-    _mode++;
-    switch (_mode)
-    {
-      default:
-      break;
-      case MODE_SETUP_MIN:
-      break;
-      case MODE_SETUP_SEC:
-      _tone.playNote(0, 100);
-      break;
-      case MODE_GOING:
-      _tone.playNote(6, 300);
-      break;
-      case MODE_BUZZING:
-      _mode = MODE_GOING;
-      break;
-      case MODE_FINISH:
-      _tone.off();
-      _mode = MODE_SETUP_MIN;
-      break;
-    }
-  }
-
-  void _settingUpTime(uint8_t direction, uint8_t razrSelected)
-  {
-    switch (direction)
-    {
-      case CODE_LEFT:
-      _decrement(razrSelected);
-      _tone.playNote(0, 20);
-      break;
-      case CODE_RIGHT:
-      _increment(razrSelected);
-      _tone.playNote(5, 20);
-      break;
-    }
-    if (_sec == 60)
-      _sec = 0;
-    if (_sec > 60)
-      _sec = 59;
-    if (_min == 100)
-      _min = 0;
-    if (_min == 255)
-      _min = 99;
-  }
-
-  void _decrement(uint8_t razr)
-  {
-    switch (razr)
-    {
-      case _display.RAZR_MIN:
-      _min--;
-      break;
-      case _display.RAZR_SEC:
-      _sec--;
-      break;
-      default:
-      break;
-    }
-  }
-
-  void _increment(uint8_t razr)
-  {
-    switch (razr)
-    {
-      case _display.RAZR_MIN:
-      _min++;
-      break;
-      case _display.RAZR_SEC:
-      _sec++;
-      break;
-    }
-  }
-
-  void _goingDown()
-  {
-    if (_sec == 255)
-    {
-      if (_min != 0)
-      {
-        _min--;
-        _sec = 59;
-      } else
-      {
-        _display.point(true);
-        _display.showChar(1);
-        //_modeSwitch();
-        _mode = MODE_BUZZING;
-        return;
-      }
-    }
-    _display.show( (_min * 100) + _sec );
     _sec--;
+    _checkTime();
   }
 
+  void incrementMin()
+  {
+    _min++;
+    _checkTime();
+  }
   
+  void decrementMin()
+  {
+    _min--;
+    _checkTime();
+  }
+
+  void reset()
+  {
+    _sec = 0;
+    _min = 0;
+  }
   
-  void _pointBlink()
+private:
+  int8_t _sec = 0;
+  int8_t _min = 0;
+  
+  void _checkTime()
   {
-    _display.point(_pointState ^= 1);
+    if (_sec == 60)
+    {
+      _sec = 0;
+      _min++;
+    } else if (_sec < 0)
+    {
+      _sec = 59;
+      _min--;
+    }
+    if (_min > 99)
+    {
+      _min = 0;
+      _sec = 0;
+    } else if (_min < 0)
+    {
+      _min = 99;
+      _sec = 59;
+    }
   }
-
-  void _pointOff()
-  {
-    if (_pointState)
-      {
-        _pointState = false;
-        _display.point(_pointState);
-      }
-  }
-
-
-  void _initTimer1()
-  {
-    TCCR1B |= (1 << CS12);
-    TIMSK1 |= (1 << OCIE1A) | (1 << OCIE1B);
-    OCR1A = 31250;    // 0.5 sec - points blink
-    OCR1B = 62500;    // 1 sec   - decrement seconds
-  }
-
-  void _stopTimer1()
-  {
-    TCCR1B &= ~((1 << CS10) | (1 << CS11) | (1 << CS12));
-  }
-
 };
 
-Timer timer(5, 6, 7, 8, 9, 10);
+EncoderPORTD encoder(S1, S2, KEY);
+Buzzer buzzer(BUZZ);
+TM1637 display(DIO, CLK);
+
+volatile State state = START;
+Time time;
+volatile bool halfSecondFlag = false, timeGoneFlag = false;
+bool pointState = false, alarmState = false;
+uint8_t ticks = 0;
 
 
-// ################# MAIN ACTIONS ARE HERE ######################
+// MAIN
+void init();
+void go(EncoderPORTD::State);
+void update(EncoderPORTD::State);
+// support
+void startTimer();
+void stopTimer();
+
+// ####################################################################
+//                                                                    |
+ISR(PCINT2_vect)
+{
+  encoder.interruptRoutine();
+}
 
 ISR(TIMER0_COMPA_vect)
 {
-  timer.voiceOver();
+  buzzer.interruptRoutine();
 }
 
 ISR(TIMER1_COMPA_vect)
 {
-  timer.updateHalfSecond();
+  halfSecondFlag = true;
 }
-
-ISR(TIMER1_COMPB_vect)
-{
-  timer.updateSecond();
-  TCNT1H = 0;
-  TCNT1L = 0;
-}
-
-ISR(PCINT2_vect)
-{
-  timer.encode();
-}
-
-// ##############################################################
 
 int main()
 {
-  setup();
+  init();
 
 
   while (true)
   {
-
+    EncoderPORTD::State encoderState = encoder.readState();
+    go(encoderState);
+    update(encoderState);
   }
   return 0;
 }
+//                                                                    |
+// ####################################################################
 
-
-void setup()
+void init()
 {
-  DDRD = 0;
-  PORTD = 255;
-  DDRB |= (1 << PB5);
-  
-
-
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCCR1C = 0;
+  TCCR1B |= (1 << WGM12);
+  TIMSK1 |= (1 << OCIE1A);
   sei();
 }
 
+void go(const EncoderPORTD::State encoderState)
+{
+  switch (state)
+  {
+    case START:
+    // Отобразить на дисплее приглашение к вводу
+    display.showChar(0);
+    display.hello();
+    pointState = true;
+    display.setPoint(pointState);
+    break;
+    case SET_MIN:
+    // Опросить энкодер и если обнаружен поворот то
+    // Уменьшить/увеличить минуты, издать звук и обновить дисплей
+    if (encoderState == EncoderPORTD::State::rotateRight)
+    {
+      time.incrementMin();
+      display.showTime(TM1637::Razr::MIN, time.getMin());
+      buzzer.playNote(Buzzer::Notes::G, ROTATE_NOTE_DURATION);
+    }
+    if (encoderState == EncoderPORTD::State::rotateLeft)
+    {
+      time.decrementMin();
+      display.showTime(TM1637::Razr::MIN, time.getMin());
+      buzzer.playNote(Buzzer::Notes::D, ROTATE_NOTE_DURATION);
+    }
+    break;
+    case SET_SEC:
+    // Опросить энкодер и если обнаружен поворот то
+    // Уменьшить/увеличить секунды, издать звук и обновить дисплей
+    if (encoderState == EncoderPORTD::State::rotateRight)
+    {
+      time.incrementSec();
+      buzzer.playNote(Buzzer::Notes::G, ROTATE_NOTE_DURATION);
+      display.showTime(TM1637::Razr::SEC, time.getSec());
+    }
+    if (encoderState == EncoderPORTD::State::rotateLeft)
+    {
+      time.decrementSec();
+      buzzer.playNote(Buzzer::Notes::D, ROTATE_NOTE_DURATION);
+      display.showTime(TM1637::Razr::SEC, time.getSec());
+    }
+    break;
+    case GOING_DOWN:
+    // Каждые пол секунды переключать двоеточие на дисплее
+    // Каждую секунду делать декремент секунд
+    // Если закончилось время то поднять флаг timeGoneFlag
+    if (halfSecondFlag)
+    {
+      display.setPoint(pointState ^= 1);
+      halfSecondFlag = false;
+      ticks++;
+      if (ticks > 1)
+      {
+        ticks = 0;
+        time.decrementSec();
+        uint16_t vremes = time.getSec() + (time.getMin() * 100);
+        display.show(vremes);
+      }
+      if (time.getMin() == 0 && time.getSec() == 0)
+        timeGoneFlag = true;
+    }
+    break;
+    case ALARM:
+    // Если поднят полсекундный флаг то сбросить его и переключить пищалку - ON/OFF
+    if (halfSecondFlag)
+    {
+      halfSecondFlag = false;
+      alarmState ^= 1;
+      if (alarmState)
+        buzzer.playNote(Buzzer::Notes::B);
+      else
+        buzzer.off();
+    }
+    break;
+    case DROP:
+    // Выключить аппаратный таймер, выключить сигнал, сбросить время и флаги
+    stopTimer();
+    buzzer.off();
+    time.reset();
+    timeGoneFlag = false;
+    halfSecondFlag = false;
+    break;
+  }
+}
 
+void update(const EncoderPORTD::State encoderState)
+{
+  switch (state)
+  {
+    case START:
+    // Безусловный переход в SET_MIN
+    state = SET_MIN;
+    break;
+    case SET_MIN:
+    // Если нажата кнопка то перейти в SET_SEC
+    if (encoderState == EncoderPORTD::State::press)
+      state = SET_SEC;
+    break;
+    case SET_SEC:
+    // Если нажата кнопка то
+    // ЗАПУСТИТЬ timer1, ПЕРЕЙТИ в GOING_DOWN
+    if (encoderState == EncoderPORTD::State::press)
+    {
+      startTimer();
+      state = GOING_DOWN;
+    }
+    break;
+    case GOING_DOWN:
+    // Если счетчик дошел до нуля (timeGoneFlag == true) то
+    // ПЕРЕНАСТРОИТЬ timer1 на сигнал тревоги - прерывание раз в пол секунды, ПЕРЕЙТИ в ALARM
+    if (timeGoneFlag == true)
+    {
+      state = ALARM;
+    }
+    break;
+    case ALARM:
+    // Если кнопка нажата перейти в DROP
+    if (encoderState == EncoderPORTD::State::press)
+      state = DROP;
+    break;
+    case DROP:
+    // Безусловный переход в START
+    state = START;
+    break;
+  }
+}
+
+void startTimer()
+{
+  OCR1A = 31249;
+  TCCR1B |= (1 << CS12);
+}
+
+void stopTimer()
+{
+  TCCR1B &= ~(1 << CS12);
+  TIFR1 = 0;
+  TCNT1 = 0;
+}
 
