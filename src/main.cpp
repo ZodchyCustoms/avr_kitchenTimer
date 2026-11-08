@@ -12,7 +12,10 @@
 #define BUZZ 8
 #define DIO 9
 #define CLK 10
-#define ROTATE_NOTE_DURATION 40
+#define ROTATE_SOUND_DURATION 30
+// Для настроек
+#define DISPLAY_BRIGHTNESS 1
+#define MAX_ALARM_TICKS 30
 
 // Режимы
 enum State
@@ -25,54 +28,71 @@ enum State
   DROP
 };
 
-// Заменить инкремент/декремент на одну функцию с параметрами?
 struct Time
 {
-  uint8_t getMin()
+  enum class Field : uint8_t
   {
-    return (uint8_t) _min;
+    Sec,
+    Min,
+    Packed
+  };
+
+  uint16_t get(Field field)
+  {
+    switch (field)
+    {
+      case Field::Sec:
+      return _sec;
+      case Field::Min:
+      return _min;
+      case Field::Packed:
+      return (_min * 100) + _sec;
+    }
   }
 
-  uint8_t getSec()
+  void increment(Field field)
   {
-    return (uint8_t) _sec;
+    switch (field)
+    {
+      case Field::Sec:
+      _sec++;
+      _checkTime();
+      break;
+      case Field::Min:
+      _min++;
+      _checkTime();
+      break;
+      default:
+      break;
+    }
   }
-
-  void incrementSec()
+  void decrement(Field field)
   {
-    _sec++;
-    _checkTime();
-  }
-  
-  void decrementSec()
-  {
-    _sec--;
-    _checkTime();
-  }
-
-  void incrementMin()
-  {
-    _min++;
-    _checkTime();
-  }
-  
-  void decrementMin()
-  {
-    _min--;
-    _checkTime();
+    switch (field)
+    {
+      case Field::Sec:
+      _sec--;
+      _checkTime();
+      break;
+      case Field::Min:
+      _min--;
+      _checkTime();
+      break;
+      default:
+      break;
+    }
   }
 
   void reset()
   {
-    _sec = 0;
     _min = 0;
+    _sec = 0;
   }
-  
+
 private:
-  int8_t _sec = 0;
-  int8_t _min = 0;
-  
-  void _checkTime()
+  int8_t _min = 0, _sec = 0;
+
+void _checkTime()
   {
     if (_sec == 60)
     {
@@ -93,6 +113,7 @@ private:
       _sec = 59;
     }
   }
+
 };
 
 EncoderPORTD encoder(S1, S2, KEY);
@@ -103,7 +124,7 @@ volatile State state = START;
 Time time;
 volatile bool halfSecondFlag = false, timeGoneFlag = false;
 bool pointState = false, alarmState = false;
-uint8_t ticks = 0;
+uint8_t ticks = 0, alarmTicks = 0;
 
 
 // MAIN
@@ -149,6 +170,7 @@ int main()
 
 void init()
 {
+  // Предарительно настроить таймер на СТС режим и включить прерывание
   TCCR1A = 0;
   TCCR1B = 0;
   TCCR1C = 0;
@@ -162,42 +184,45 @@ void go(const EncoderPORTD::State encoderState)
   switch (state)
   {
     case START:
-    // Отобразить на дисплее приглашение к вводу
+    // Установить яркость дисплея, убрать тире, запустить анимацию, включить двоеточие
+    display.setBrightness(DISPLAY_BRIGHTNESS);
     display.showChar(0);
     display.hello();
     pointState = true;
     display.setPoint(pointState);
     break;
     case SET_MIN:
-    // Опросить энкодер и если обнаружен поворот то
+    // Если обнаружен поворот энкодера то
     // Уменьшить/увеличить минуты, издать звук и обновить дисплей
     if (encoderState == EncoderPORTD::State::rotateRight)
     {
-      time.incrementMin();
-      display.showTime(TM1637::Razr::MIN, time.getMin());
-      buzzer.playNote(Buzzer::Notes::G, ROTATE_NOTE_DURATION);
+      time.increment(Time::Field::Min);
+      display.showTime(TM1637::Razr::MIN, time.get(Time::Field::Min));
+      buzzer.playNote(Buzzer::Notes::G, ROTATE_SOUND_DURATION);
     }
     if (encoderState == EncoderPORTD::State::rotateLeft)
     {
-      time.decrementMin();
-      display.showTime(TM1637::Razr::MIN, time.getMin());
-      buzzer.playNote(Buzzer::Notes::D, ROTATE_NOTE_DURATION);
+      time.decrement(Time::Field::Min);
+      display.showTime(TM1637::Razr::MIN, time.get(Time::Field::Min));
+      buzzer.playNote(Buzzer::Notes::D, ROTATE_SOUND_DURATION);
     }
     break;
     case SET_SEC:
-    // Опросить энкодер и если обнаружен поворот то
+    // Если обнаружен поворот энкодера то
     // Уменьшить/увеличить секунды, издать звук и обновить дисплей
     if (encoderState == EncoderPORTD::State::rotateRight)
     {
-      time.incrementSec();
-      buzzer.playNote(Buzzer::Notes::G, ROTATE_NOTE_DURATION);
-      display.showTime(TM1637::Razr::SEC, time.getSec());
+      time.increment(Time::Field::Sec);
+      buzzer.playNote(Buzzer::Notes::G, ROTATE_SOUND_DURATION);
+      display.show(time.get(Time::Field::Packed));
+      // display.showTime(TM1637::Razr::SEC, time.getSec());
     }
     if (encoderState == EncoderPORTD::State::rotateLeft)
     {
-      time.decrementSec();
-      buzzer.playNote(Buzzer::Notes::D, ROTATE_NOTE_DURATION);
-      display.showTime(TM1637::Razr::SEC, time.getSec());
+      time.decrement(Time::Field::Sec);
+      buzzer.playNote(Buzzer::Notes::D, ROTATE_SOUND_DURATION);
+      display.show(time.get(Time::Field::Packed));
+      // display.showTime(TM1637::Razr::SEC, time.getSec());
     }
     break;
     case GOING_DOWN:
@@ -212,11 +237,10 @@ void go(const EncoderPORTD::State encoderState)
       if (ticks > 1)
       {
         ticks = 0;
-        time.decrementSec();
-        uint16_t vremes = time.getSec() + (time.getMin() * 100);
-        display.show(vremes);
+        time.decrement(Time::Field::Sec);
+        display.show(time.get(Time::Field::Packed));
       }
-      if (time.getMin() == 0 && time.getSec() == 0)
+      if (time.get(Time::Field::Min) == 0 && time.get(Time::Field::Sec) == 0)
         timeGoneFlag = true;
     }
     break;
@@ -226,10 +250,15 @@ void go(const EncoderPORTD::State encoderState)
     {
       halfSecondFlag = false;
       alarmState ^= 1;
-      if (alarmState)
+      if (alarmState){
         buzzer.playNote(Buzzer::Notes::B);
-      else
+        display.setBrightness(DISPLAY_BRIGHTNESS);
+        alarmTicks++;   // Проверка в update(), сброс в case DROP
+      } else
+      {
         buzzer.off();
+        display.setBrightness(0);
+      }
     }
     break;
     case DROP:
@@ -239,6 +268,8 @@ void go(const EncoderPORTD::State encoderState)
     time.reset();
     timeGoneFlag = false;
     halfSecondFlag = false;
+    alarmState = false;
+    alarmTicks = 0;
     break;
   }
 }
@@ -261,21 +292,21 @@ void update(const EncoderPORTD::State encoderState)
     // ЗАПУСТИТЬ timer1, ПЕРЕЙТИ в GOING_DOWN
     if (encoderState == EncoderPORTD::State::press)
     {
-      startTimer();
       state = GOING_DOWN;
+      startTimer();
     }
     break;
     case GOING_DOWN:
-    // Если счетчик дошел до нуля (timeGoneFlag == true) то
-    // ПЕРЕНАСТРОИТЬ timer1 на сигнал тревоги - прерывание раз в пол секунды, ПЕРЕЙТИ в ALARM
+    // Если счетчик дошел до нуля (timeGoneFlag == true) то ПЕРЕЙТИ в ALARM
     if (timeGoneFlag == true)
     {
       state = ALARM;
+      display.showChar(1);
     }
     break;
     case ALARM:
-    // Если кнопка нажата перейти в DROP
-    if (encoderState == EncoderPORTD::State::press)
+    // Если кнопка нажата или закончилось время сигнализирования перейти в DROP
+    if (encoderState == EncoderPORTD::State::press || alarmTicks > MAX_ALARM_TICKS)
       state = DROP;
     break;
     case DROP:
